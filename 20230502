@@ -1,0 +1,259 @@
+#include <ESP8266WiFi.h>
+#include <BlynkSimpleEsp8266.h>
+#include <Adafruit_NeoPixel.h>
+#include <Wire.h>
+#include <CapacitiveSensor.h>
+#include <Adafruit_VibrationSensor.h>
+
+// WiFi and Blynk credentials
+char ssid[] = "your_ssid";
+char pass[] = "your_password";
+char auth[] = "your_blynk_auth_token";
+
+// Neopixel LED ring
+#define LED_PIN    D4
+#define LED_COUNT  12
+Adafruit_NeoPixel ring(LED_COUNT, LED_PIN, NEO_GRB + NEO_KHZ800);
+
+// Touch capacitive sensor
+#define CAP_SENSOR_SEND_PIN D5
+#define CAP_SENSOR_RECEIVE_PIN D6
+CapacitiveSensor capSensor = CapacitiveSensor(CAP_SENSOR_SEND_PIN, CAP_SENSOR_RECEIVE_PIN);
+
+// Vibration sensor
+#define VIB_SENSOR_PIN A0
+Adafruit_VibrationSensor vibSensor(VIB_SENSOR_PIN);
+
+// Pomodoro timer settings
+unsigned long focusDuration = 1500000; // 25 minutes
+unsigned long relaxDuration = 300000;  // 5 minutes
+bool pomodoroActive = false;
+unsigned long pomodoroStartTime = 0;
+
+// Friendship lamp settings
+uint32_t friendshipColor = 0;
+
+// Google Calendar settings
+const char* googleCalendarId = "your_google_calendar_id";
+const char* googleCalendarApiKey = "your_google_calendar_api_key";
+
+void setup() {
+  Serial.begin(115200);
+  Blynk.begin(auth, ssid, pass);
+  ring.begin();
+  ring.show(); // Initialize all pixels to 'off'
+  capSensor.set_CS_AutocaL_Millis(0xFFFFFFFF);
+  vibSensor.begin();
+
+  // Breathing light startup sequence
+  for (int i = 0; i < 3; i++) {
+    breatheLight();
+  }
+}
+
+void loop() {
+  Blynk.run();
+  handlePomodoro();
+  handleCalendarReminder();
+  handleFriendshipLamp();
+}
+
+void breatheLight() {
+  for (int i = 0; i < 255; i++) {
+    ring.fill(ring.Color(i / 4, i / 4, i / 4));
+    ring.show();
+    delay(10);
+  }
+  for (int i = 255; i > 0; i--) {
+    ring.fill(ring.Color(i / 4, i / 4, i / 4));
+    ring.show();
+    delay(10);
+  }
+}
+
+void handlePomodoro() {
+  if (capSensor.capacitiveSensor(30) > 1000) {
+    if (!pomodoroActive) {
+      pomodoroActive = true;
+      pomodoroStartTime = millis();
+    } else {
+      pomodoroActive = false;
+      ring.clear();
+      ring.show();
+    }
+  }
+
+  if (pomodoroActive) {
+    unsigned long elapsedTime = millis() - pomodoroStartTime;
+    if (elapsedTime < focusDuration) {
+      ring.fill(ring.Color(0, 0, 255)); // Blue for focus time
+    } else if (elapsedTime < focusDuration + relaxDuration) {
+      ring.fill(ring.Color(0, 255, 0)); // Green for relax time
+    } else {
+      pomodoroStartTime = millis(); // Restart the pomodoro cycle
+    }
+    ring.show();
+  }
+}
+
+void handleCalendarReminder() {
+  // Retrieve events and reminder times from Google Calendar
+  // TODO: Implement Google Calendar API integration to get events and reminder times
+  // For now, use a fixed reminder time in seconds
+
+  int reminderTime = 600; // 10 minutes before the event
+  static unsigned long lastEventCheck = 0;
+  static bool inEvent = false;
+  static unsigned long eventStartTime = 0;
+  static unsigned long eventDuration = 0;
+
+  if (millis() - lastEventCheck > 60000) { // Check events every minute
+  lastEventCheck = millis();
+
+  // TODO: Get the event start time and duration from Google Calendar API
+// For now, use a fixed event start time and duration
+eventStartTime = millis() + 3600000; // Event starts in 1 hour
+eventDuration = 3600000; // Event lasts for 1 hour
+
+unsigned long timeToEvent = eventStartTime - millis();
+if (timeToEvent <= reminderTime * 1000 && !inEvent) {
+  // Gradate color from yellow to orange to red as event approaches
+  uint8_t red = map(timeToEvent, 0, reminderTime * 1000, 255, 255);
+  uint8_t green = map(timeToEvent, 0, reminderTime * 1000, 0, 255);
+  uint8_t blue = 0;
+  ring.fill(ring.Color(red, green, blue));
+  ring.show();
+} else if (millis() >= eventStartTime && millis() < eventStartTime + eventDuration) {
+  // Event is occurring, display red light
+  inEvent = true;
+  ring.fill(ring.Color(255, 0, 0));
+  ring.show();
+} else {
+  inEvent = false;
+}
+
+}
+}
+
+void handleFriendshipLamp() {
+if (vibSensor.read() > 50) { // Trigger threshold for vibration sensor
+ring.fill(friendshipColor);
+ring.show();
+delay(1000);
+Blynk.virtualWrite(V1, 1); // Send signal to paired device(s) via Blynk
+delay(500);
+Blynk.virtualWrite(V1, 0);
+}
+}
+
+// Blynk app settings
+BLYNK_WRITE(V2) { // Set focus duration
+focusDuration = param.asInt() * 60000; // Convert minutes to milliseconds
+}
+
+BLYNK_WRITE(V3) { // Set relax duration
+relaxDuration = param.asInt() * 60000; // Convert minutes to milliseconds
+}
+
+BLYNK_WRITE(V4) { // Set friendship lamp color
+friendshipColor = param.asInt();
+}
+
+BLYNK_WRITE(V5) { // Set reminder time
+reminderTime = param.asInt() * 60; // Convert minutes to seconds
+}
+
+BLYNK_WRITE(V6) { // Set Google Calendar account
+// TODO: Implement Google Calendar API integration to set the account
+}
+
+// Implement Google Calendar API integration
+#include <ESP8266HTTPClient.h>
+#include <ArduinoJson.h>
+
+// Helper function to get the current date and time
+String getCurrentDateTime() {
+  time_t now = time(nullptr);
+  struct tm *newtime = localtime(&now);
+  char buffer[25];
+  strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S", newtime);
+  return String(buffer);
+}
+
+// Function to get events from Google Calendar
+void getGoogleCalendarEvents() {
+  String currentTime = getCurrentDateTime();
+
+  String url = "https://www.googleapis.com/calendar/v3/calendars/";
+  url += googleCalendarId;
+  url += "/events?key=";
+  url += googleCalendarApiKey;
+  url += "&timeMin=";
+  url += currentTime;
+  url += "&singleEvents=true&orderBy=startTime";
+
+  HTTPClient http;
+  http.begin(url);
+  int httpCode = http.GET();
+
+  if (httpCode > 0) {
+    String payload = http.getString();
+    DynamicJsonDocument doc(1024);
+    deserializeJson(doc, payload);
+
+    if (doc.containsKey("items")) {
+      JsonArray items = doc["items"].as<JsonArray>();
+      for (JsonVariant item : items) {
+        // Exclude all day events
+        if (!item["start"].containsKey("dateTime")) {
+          continue;
+        }
+
+        // Get event start time and duration
+        String startTimeStr = item["start"]["dateTime"].as<String>();
+        String endTimeStr = item["end"]["dateTime"].as<String>();
+        time_t startTime = parseDateTime(startTimeStr);
+        time_t endTime = parseDateTime(endTimeStr);
+        unsigned long duration = endTime - startTime;
+
+        // Store event start time and duration in variables
+        eventStartTime = (unsigned long) startTime * 1000;
+        eventDuration = duration * 1000;
+
+        // Get reminder time
+        if (item["reminders"].containsKey("overrides")) {
+          JsonArray reminders = item["reminders"]["overrides"].as<JsonArray>();
+          for (JsonVariant reminder : reminders) {
+            if (reminder["method"] == "popup") {
+              reminderTime = reminder["minutes"].as<int>() * 60;
+              break;
+            }
+          }
+        }
+
+        break; // Process only the first event
+      }
+    }
+  }
+
+  http.end();
+}
+
+// Function to parse date and time from Google Calendar API
+time_t parseDateTime(String dateTimeStr) {
+  struct tm tm;
+  memset(&tm, 0, sizeof(tm));
+  strptime(dateTimeStr.c_str(), "%Y-%m-%dT%H:%M:%S", &tm);
+  return mktime(&tm);
+}
+
+void loop() {
+  Blynk.run();
+  handlePomodoro();
+  handleCalendarReminder();
+  handleFriendshipLamp();
+  getGoogleCalendarEvents(); // Add this line to get events from Google Calendar
+}
+
+
+
