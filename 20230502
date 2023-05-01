@@ -70,27 +70,31 @@ void breatheLight() {
     delay(10);
   }
 }
-
 void handlePomodoro() {
-  if (capSensor.capacitiveSensor(30) > 1000) {
-    if (!pomodoroActive) {
-      pomodoroActive = true;
-      pomodoroStartTime = millis();
+  unsigned long currentTime = millis();
+  if (capSensor.capacitiveSensor(30) > 1000) { // Trigger threshold for capacitive sensor
+    if (pomodoroState == PomodoroState::STOPPED) {
+      pomodoroState = PomodoroState::FOCUS;
+      pomodoroStartTime = currentTime;
     } else {
-      pomodoroActive = false;
-      ring.clear();
-      ring.show();
+      pomodoroState = PomodoroState::STOPPED;
     }
+    delay(1000); // Prevent multiple triggers
   }
 
-  if (pomodoroActive) {
-    unsigned long elapsedTime = millis() - pomodoroStartTime;
-    if (elapsedTime < focusDuration) {
-      ring.fill(ring.Color(0, 0, 255)); // Blue for focus time
-    } else if (elapsedTime < focusDuration + relaxDuration) {
-      ring.fill(ring.Color(0, 255, 0)); // Green for relax time
+  if (pomodoroState != PomodoroState::STOPPED) {
+    if (pomodoroState == PomodoroState::FOCUS) {
+      if (currentTime - pomodoroStartTime >= focusDuration) {
+        pomodoroState = PomodoroState::RELAX;
+        pomodoroStartTime = currentTime;
+      }
+      ring.fill(ring.Color(0, 0, 255)); // Blue color for focus time
     } else {
-      pomodoroStartTime = millis(); // Restart the pomodoro cycle
+      if (currentTime - pomodoroStartTime >= relaxDuration) {
+        pomodoroState = PomodoroState::FOCUS;
+        pomodoroStartTime = currentTime;
+      }
+      ring.fill(ring.Color(255, 183, 197)); // Sakura pink color for relax time
     }
     ring.show();
   }
