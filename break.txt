@@ -1,0 +1,540 @@
+
+
+#include <Arduino.h>
+#include <ESP8266WiFi.h>
+#include "HTTPSRedirect.h"
+#include "eprom.h"
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+#include <ESP8266WiFi.h>
+#include <BlynkSimpleEsp8266.h>
+
+#include <Adafruit_NeoPixel.h>
+#define PIN          D5
+  // How many NeoPixels LEDs are attached to the ESP32?
+#define NUMPIXELS  30
+
+// We define birghtness of NeoPixel LEDs
+#define BRIGHTNESS  2
+// User stub
+Adafruit_NeoPixel matrix = Adafruit_NeoPixel(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
+
+
+
+/* Comment this out to disable prints and save space */
+#define BLYNK_PRINT Serial
+
+/* Fill-in your Template ID (only if using Blynk.Cloud) */
+//#define BLYNK_TEMPLATE_ID   "YourTemplateID"
+
+
+
+
+// You should get Auth Token in the Blynk App.
+// Go to the Project Settings (nut icon).
+char auth[] = "NeSYoxSAVgbSAmaMrxhDRGx4y0uFTc5w";
+String calendarData = "";
+int remMin=0;
+void heartBeat();
+
+//Connection Settings
+const char* host = "script.google.com";
+const char* googleRedirHost = "script.googleusercontent.com";
+const int httpsPort = 443;
+unsigned long epochTime ;
+unsigned long entryCalender, entryPrintStatus, entryInterrupt, heartBeatEntry, heartBeatLedEntry;
+String url;
+bool eventHere(int task);
+
+#define UPDATETIME 10000
+
+#ifdef CREDENTIALS
+const char*  ssid = mySSID;
+const char* password = myPASSWORD;
+const char *GScriptIdRead = GoogleScriptIdRead;
+const char *GScriptIdWrite = GoogleScriptIdWrite;
+#else
+//Network credentials
+const char* ssid = "ZTE_E70C44"; //replace with you ssid
+const char* password = "17555325"; //replace with your password
+//Google Script ID
+//script.google.com/macros/s//exec
+const char *GScriptIdRead = "AKfycbyWHKGEcbWVt1poQdfLuBbjxOQ1ejttZnCbHvui81ZivClUYbCdgHfmdtQxZKtRx7A2YQ"; //replace with you gscript id for reading the calendar
+const char *GScriptIdWrite = "..........."; //replace with you gscript id for writing the calendar
+#endif
+
+#define NBR_EVENTS 4
+int currentHour;
+ int currentMinute ;
+
+String  possibleEvents[NBR_EVENTS] = {"Laundry", "Meal",  "Telephone", "Shop"};
+byte  LEDpins[NBR_EVENTS]    = {D2, D7, D4, D8};  // connect LEDs to these pins or change pin number here
+byte  switchPins[NBR_EVENTS] = {D1, D3, D0, D6};  // connect switches to these pins or change pin number here
+bool switchPressed[NBR_EVENTS];
+boolean beat = false;
+int beatLED = 0;
+
+enum taskStatus {
+  none,
+  due,
+  done
+};
+
+taskStatus taskStatus[NBR_EVENTS];
+HTTPSRedirect* client = nullptr;
+
+
+bool calenderUpToDate;
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org");
+//Connect to wifi
+WidgetLCD lcd(V1);
+void neoOnEvent()
+{
+matrix.setBrightness(200);
+  for (uint16_t i = 0; i < matrix.numPixels(); i++)
+  {
+    matrix.setPixelColor(i, matrix.Color(255, 0, 0));
+  }
+  matrix.show();
+}
+void connectToWifi() {
+  Serial.println();
+  Serial.print("Connecting to wifi: ");
+  Serial.println(ssid);
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.print("WiFi connected ");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+
+  // Use HTTPSRedirect class to create a new TLS connection
+  client = new HTTPSRedirect(httpsPort);
+  client->setInsecure();
+  client->setPrintResponseBody(true);
+  client->setContentTypeHeader("application/json");
+
+  Serial.print("Connecting to ");
+  Serial.println(host);
+
+  // Try to connect for a maximum of 5 times
+  bool flag = false;
+  for (int i = 0; i < 5; i++) {
+    int retval = client->connect(host, httpsPort);
+    if (retval == 1) {
+      flag = true;
+      break;
+    }
+    else
+      Serial.println("Connection failed. Retrying...");
+  }
+
+  if (!flag) {
+    Serial.print("Could not connect to server: ");
+    Serial.println(host);
+    Serial.println("Exiting...");
+    ESP.reset();
+  }
+  Serial.println("Connected to Google");
+}
+
+void printStatus() {
+  for (int i = 0; i < NBR_EVENTS; i++) {
+    Serial.print("Task ");
+    Serial.print(i);
+    Serial.print(" Status ");
+    Serial.println(taskStatus[i]);
+  }
+  Serial.println("----------");
+}
+
+void getCalendar() {
+  //  Serial.println("Start Request");
+  // HTTPSRedirect client(httpsPort);
+  // Try to connect for a maximum of 5 times
+  bool flag = false;
+  for (int i = 0; i < 5; i++) {
+    int retval = client->connect(host, httpsPort);
+    if (retval == 1) {
+      flag = true;
+      break;
+    }
+    else
+      Serial.println("Connection failed. Retrying...");
+  }
+  if (!flag) {
+    Serial.print("Could not connect to server: ");
+    Serial.println(host);
+    Serial.println("Exiting...");
+    ESP.reset();
+  }
+  //Fetch Google Calendar events
+  String url = String("/macros/s/") + GScriptIdRead + "/exec";
+  client->GET(url, host);
+  calendarData = client->getResponseBody();
+  Serial.print("Calendar Data---> ");
+  Serial.println(calendarData);
+  calenderUpToDate = true;
+  yield();
+}
+
+void createEvent(String title) {
+  // Serial.println("Start Write Request");
+
+  // Try to connect for a maximum of 5 times
+  bool flag = false;
+  for (int i = 0; i < 5; i++) {
+    int retval = client->connect(host, httpsPort);
+    if (retval == 1) {
+      flag = true;
+      break;
+    }
+    else
+      Serial.println("Connection failed. Retrying...");
+  }
+  if (!flag) {
+    Serial.print("Could not connect to server: ");
+    Serial.println(host);
+    Serial.println("Exiting...");
+    ESP.reset();
+  }
+  // Create event on Google Calendar
+  String url = String("/macros/s/") + GScriptIdWrite + "/exec" + "?title=" + title;
+  client->GET(url, host);
+  //  Serial.println(url);
+  Serial.println("Write Event created ");
+  calenderUpToDate = false;
+}
+
+void manageStatus() {
+  for (int i = 0; i < NBR_EVENTS; i++) {
+    switch (taskStatus[i]) {
+      case none:
+        if (switchPressed[i]) {
+          digitalWrite(LEDpins[i], HIGH);
+          while (!calenderUpToDate) getCalendar();
+          if (!eventHere(i)) createEvent(possibleEvents[i]);
+          Serial.print(i);
+          Serial.println(" 0 -->1");
+          //getCalendar();
+          taskStatus[i] = due;
+        } else {
+          if (eventHere(i)) {
+            digitalWrite(LEDpins[i], HIGH);
+            Serial.print(i);
+            Serial.println(" 0 -->1");
+            taskStatus[i] = due;
+          }
+        }
+        break;
+      case due:
+        if (switchPressed[i]) {
+          digitalWrite(LEDpins[i], LOW);
+          Serial.print(i);
+          Serial.println(" 1 -->2");
+          taskStatus[i] = done;
+        }
+        break;
+      case done:
+        if (calenderUpToDate && !eventHere(i)) {
+          digitalWrite(LEDpins[i], LOW);
+          Serial.print(i);
+          Serial.println(" 2 -->0");
+          taskStatus[i] = none;
+        }
+        break;
+      default:
+        break;
+    }
+    switchPressed[i] = false;
+  }
+  yield();
+}
+
+bool eventHere(int task) {
+  if (calendarData.indexOf(possibleEvents[task], 0) >= 0 ) {
+    //    Serial.print("Task found ");
+    //    Serial.println(task);
+    return true;
+  } else {
+    //   Serial.print("Task not found ");
+    //   Serial.println(task);
+    return false;
+  }
+}
+
+ICACHE_RAM_ATTR void handleInterrupt() {
+  if (millis() > entryInterrupt + 100) {
+    entryInterrupt = millis();
+    for (int i = 0; i < NBR_EVENTS; i++) {
+      if (digitalRead(switchPins[i]) == LOW) {
+        switchPressed[i] = true;
+      }
+    }
+  }
+}
+
+void getNTP() {
+  timeClient.update();
+
+  epochTime = timeClient.getEpochTime();
+  Serial.print("Epoch Time: ");
+  Serial.println(epochTime);
+  
+  String formattedTime = timeClient.getFormattedTime();
+  Serial.print("Formatted Time: ");
+  Serial.println(formattedTime);  
+
+   currentHour = timeClient.getHours();
+  Serial.print("Hour: ");
+  Serial.println(currentHour);  
+
+  currentMinute = timeClient.getMinutes();
+  Serial.print("Minutes: ");
+  Serial.println(currentMinute); 
+  
+}
+
+void  offNeo() {
+uint16_t i, j;
+
+for (i = 0; i <=matrix.numPixels(); i++) {
+matrix.setPixelColor(i,0,0,0);
+}
+matrix.setBrightness(0);
+matrix.show();
+
+}
+
+void  brighten() {
+uint16_t i, j;
+
+for (j = 0; j < 255; j++) {
+for (i = 0; i <=matrix.numPixels(); i++) {
+matrix.setPixelColor(i,255,255,0);
+}
+matrix.setBrightness(j);
+matrix.show();
+delay(10);
+}
+//delay(1500);
+}
+
+// 255 to 0
+void darken() {
+uint16_t i, j;
+
+for (j = 255; j > 0; j--) {
+for (i = 1; i <=matrix.numPixels(); i++) {
+matrix.setPixelColor(i,255,255,0); // yellow with a little extra red to make it warmer. Instead of “strip.setPixelColor(i, 0, 0, j);”
+}
+matrix.setBrightness(j);
+matrix.show();
+delay(5);
+
+}
+//delay(1500);
+}
+
+void neoCriticalFade()
+{
+
+uint16_t i, j;
+matrix.setBrightness(200);
+for (j = 0; j < 255; j++) {
+for (i = 0; i <=matrix.numPixels(); i++) {
+matrix.setPixelColor(i,255,255,0);
+}
+
+matrix.show();
+delay(10);
+
+  for (int i = 255; i > 0; i--)
+  {
+    startColor = strip(10, 10, 255);
+    endColor = strip(255, 0, 100);
+      strip.show();
+      delay(10);
+  }
+}
+
+}
+
+void neoSafetyFade()
+{
+brighten();
+darken();
+
+}
+void scheduleNEO()
+{
+
+  String up_event1=calendarData.substring(0,calendarData.indexOf("S"));
+  Serial.println("EVENT_1: "+up_event1);
+
+ double event_st=calendarData.substring(calendarData.indexOf("S")+1,calendarData.indexOf("E")).toDouble();
+double event_en=calendarData.substring(calendarData.indexOf("E")+1,calendarData.indexOf("L")).toDouble();
+event_st=event_st/1000;
+event_en=event_en/1000;
+Serial.println("Current EPOCH Time"+(String)(epochTime));
+Serial.println("EVENT start Time: "+(String)event_st);
+Serial.println("EVENT end Time: "+(String)event_en);
+double remEpoch=(remMin*60000)/1000;
+Serial.println("EVENT Reminder Time: "+(String)remEpoch);
+if(epochTime>(event_st-remEpoch) && epochTime<(event_st-(remEpoch)/2))
+{
+  Serial.println("Start Safety Time Neo Yellow");
+  neoSafetyFade();
+}
+else if (epochTime>(event_st-(remEpoch)/2) && epochTime<event_st)
+{
+   Serial.println("Start Critcial Time Neo Yellow to Orange");
+  neoSafetyFade();
+}
+else if (epochTime>(event_st) && epochTime>(event_en))
+{
+   Serial.println("Start on Event Neo Red");
+  neoOnEvent();
+}
+}
+
+void uploadData()
+{
+  String up_event1=calendarData.substring(0,calendarData.indexOf("%"));
+  calendarData.replace(up_event1+"%","");
+  Serial.println("EVENT_1: "+up_event1);
+  String up_event2=calendarData.substring(0,calendarData.indexOf("%"));
+Serial.println("EVENT_2: "+up_event2);
+lcd.clear();
+int sc1_h=up_event1.substring(up_event1.indexOf(";")+1,up_event1.indexOf(":")).toInt();
+int sc1_m=up_event1.substring(up_event1.indexOf(":")+1,up_event1.length()).toInt();
+Serial.println("SC1_h: "+(String)sc1_h);
+Serial.println("SC1_m: "+(String)sc1_m);
+
+
+int sc2_h=up_event2.substring(up_event2.indexOf(";")+1,up_event2.indexOf(":")).toInt();
+int sc2_m=up_event2.substring(up_event2.indexOf(":")+1,up_event2.length()).toInt();
+Serial.println("SC2_h: "+(String)sc2_h);
+Serial.println("SC2_m: "+(String)sc2_m);
+
+if((sc1_h==currentHour && sc1_m>currentMinute) || sc1_h>currentHour )
+{
+ int marg= sc1_m-remMin;
+  if(sc1_h==currentHour && currentMinute>marg)
+Serial.println("Task 1 is scheduled");
+neoSafetyFade();
+}
+else if(sc1_h==currentHour && sc1_m==currentMinute)
+{
+neoOnEvent();
+
+}
+else if((sc2_h==currentHour && sc2_m>currentMinute) || sc2_h>currentHour )
+{
+Serial.println("Task 2 is scheduled");
+neoSafetyFade();
+}
+
+else if(sc2_h==currentHour && sc2_m==currentMinute)
+{
+neoOnEvent();
+
+}
+
+lcd.print(0,0,up_event1);
+lcd.print(0,1,up_event2);
+
+scheduleNEO();
+}
+
+void setup() {
+  Serial.begin(115200);
+matrix.begin();
+EEPROM.begin(50);
+remMin=readIntFromEEPROM(0);
+ Blynk.begin(auth, ssid, password);
+  Serial.println("ReminderTime: "+(String)remMin);
+  Serial.println("Reminder_V2");
+  for (int i = 0; i < NBR_EVENTS; i++) {
+    pinMode(LEDpins[i], OUTPUT);
+    taskStatus[i] = none;  // Reset all LEDs
+    pinMode(switchPins[i], INPUT_PULLUP);
+    switchPressed[i] = false;
+    attachInterrupt(digitalPinToInterrupt(switchPins[i]), handleInterrupt, FALLING);
+  }
+  connectToWifi();
+  getCalendar();
+  entryCalender = millis();
+
+// Initialize a NTPClient to get time
+  timeClient.begin();
+  // Set offset time in seconds to adjust for your timezone, for example:
+  // GMT +1 = 3600
+  // GMT +8 = 28800
+  // GMT -1 = -3600
+  // GMT 0 = 0
+  timeClient.setTimeOffset(3600*5);
+  getNTP();
+ 
+    
+ // matrix.setBrightness(BRIGHTNESS);
+  neoSafetyFade();
+
+}
+
+
+void loop() {
+   Blynk.run();
+  if (millis() > entryCalender + UPDATETIME) {
+    getCalendar();
+    entryCalender = millis();
+    getNTP();
+    //uploadData();
+  scheduleNEO();
+  }
+  manageStatus();
+  if (millis() > entryPrintStatus + 5000) {
+    printStatus();
+    entryPrintStatus = millis();
+  }
+  if (millis() > heartBeatEntry + 30000) {
+    beat = true;
+    heartBeatEntry = millis();
+  }
+ // heartBeat();
+}
+
+void heartBeat() {
+  if (beat) {
+    if ( millis() > heartBeatLedEntry + 100) {
+      heartBeatLedEntry = millis();
+      if (beatLED < NBR_EVENTS) {
+
+        if (beatLED > 0) digitalWrite(LEDpins[beatLED - 1], LOW);
+        digitalWrite(LEDpins[beatLED], HIGH);
+        beatLED++;
+      }
+      else {
+        for (int i = 0; i < NBR_EVENTS; i++) {
+          if (taskStatus[i] == due) digitalWrite(LEDpins[i], HIGH);
+          else digitalWrite(LEDpins[i], LOW);
+        }
+        beatLED = 0;
+        beat = false;
+      }
+    }
+  }
+}
+
+BLYNK_WRITE(V0)
+{
+  remMin = param.asInt(); // Get value as integer
+  Serial.println("Reminder Minutes: "+(String)remMin);
+writeIntIntoEEPROM(0,remMin);
+
+}
