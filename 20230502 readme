@@ -1,0 +1,57 @@
+To set up your Blynk project for the smart lamp, follow these steps:
+
+1. **Install the Blynk app**: Download and install the Blynk app on your smartphone (available for both Android and iOS devices).
+
+2. **Create a new project**: Open the Blynk app, sign up or log in, and then create a new project by tapping on the "+" button. Give your project a name (e.g., "Smart Lamp") and select the "ESP8266" as the device. Set the connection type to "Wi-Fi" and tap "Create Project".
+
+3. **Get the Auth Token**: After creating the project, an Auth Token will be sent to your email. You'll need this token in your Arduino code to connect the device to your Blynk project. Replace the placeholder in the code with your actual Auth Token:
+   ```
+   char auth[] = "your_blynk_auth_token";
+   ```
+
+4. **Add widgets**: Now, you need to add the necessary widgets to your Blynk project for controlling the smart lamp functions. You can add widgets by tapping on the "+" icon in the app.
+
+   - **Pomodoro focus duration**: Add a "Numeric Input" widget to set the focus duration. In the widget settings, set the "Output" to Virtual Pin V2, set the desired range (e.g., 1-60 minutes), and choose a step value (e.g., 1 minute).
+
+   - **Pomodoro relax duration**: Add another "Numeric Input" widget to set the relax duration. In the widget settings, set the "Output" to Virtual Pin V3, set the desired range (e.g., 1-60 minutes), and choose a step value (e.g., 1 minute).
+
+   - **Friendship lamp color**: Add a "ZeRGBa" widget to set the friendship lamp color. In the widget settings, set the "Output" to Virtual Pin V4 and choose the desired color mode (e.g., "Split").
+
+   - **Reminder time**: Add another "Numeric Input" widget to set the event reminder time. In the widget settings, set the "Output" to Virtual Pin V5, set the desired range (e.g., 1-60 minutes), and choose a step value (e.g., 1 minute).
+
+   - **Google Calendar account**: Add a "Webhook" widget to set the Google Calendar account. In the widget settings, set the "Output" to Virtual Pin V6, and configure the URL to interact with the Google Calendar API (you'll need to implement this part based on your specific implementation).
+
+5. **Run the project**: After setting up the widgets, tap the "Play" button in the Blynk app to start the project. Your smart lamp should now be controllable through the Blynk app.
+
+Please note that you'll need to have the Blynk library installed in your Arduino IDE to compile and upload the code to your ESP8266. You can install the library from the Arduino Library Manager or download it from the Blynk GitHub repository (https://github.com/blynkkk/blynk-library).
+
+
+This code implements the Google Calendar API integration to get events and reminder times. It also includes a helper function to parse the date and time from Google Calendar API. Please note that this code requires the ArduinoJson library, which you can install from the Arduino Library Manager. Make sure to replace the placeholders with your actual Google Calendar ID and API key.
+
+
+
+
+
+
+
+The code is designed to create a smart lamp using an ESP8266 microcontroller, a Neopixel LED ring, a touch capacitive sensor, a vibration sensor, and connecting to the Blynk app and Google Calendar API. The smart lamp has three main functions: a Pomodoro timer, a calendar event reminder, and a friendship lamp.
+
+Here's a breakdown of the main sections of the code:
+
+1. **Library inclusion and variable definitions**: The code starts by including the required libraries and defining the necessary variables for WiFi, Blynk, Neopixel LED ring, capacitive sensor, vibration sensor, Pomodoro timer, friendship lamp, and Google Calendar settings.
+
+2. **Setup function**: The `setup()` function initializes the Serial communication, Blynk connection, Neopixel LED ring, capacitive sensor, and vibration sensor. It also runs a breathing light startup sequence to indicate the device is on and trying to connect to WiFi.
+
+3. **Breathing light function**: `breatheLight()` is a helper function that creates a calm white light breathing effect on the Neopixel LED ring.
+
+4. **Pomodoro timer handling**: The `handlePomodoro()` function checks for capacitive sensor input to start, pause, or stop the Pomodoro timer. When the Pomodoro timer is active, it changes the LED ring color to blue during the focus time and green during the relax time.
+
+5. **Google Calendar reminder handling**: The `handleCalendarReminder()` function retrieves events and reminder times from the Google Calendar API (the integration is implemented in the additional code provided later). It gradates the LED ring color from yellow to orange to red as the event approaches and displays a red light during the event.
+
+6. **Friendship lamp handling**: The `handleFriendshipLamp()` function checks for vibration sensor input and, when triggered, changes the LED ring color to the selected friendship color and sends a signal to the paired device(s) via the Blynk app.
+
+7. **Blynk app settings**: The code includes several Blynk app setting functions to set the focus duration, relax duration, friendship lamp color, reminder time, and Google Calendar account based on the user's input in the Blynk app.
+
+8. **Google Calendar API integration**: The additional code provided later in the conversation implements the Google Calendar API integration, which allows the device to retrieve events and reminder times from the user's Google Calendar. It includes helper functions to get the current date and time, get events from Google Calendar, and parse date and time from the Google Calendar API.
+
+The `loop()` function at the end of the code executes the main functions (Pomodoro timer handling, Google Calendar reminder handling, and friendship lamp handling) as well as the Google Calendar API integration (in the additional code provided later).
